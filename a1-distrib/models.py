@@ -8,7 +8,7 @@ import numpy as np
 from sentiment_data import *
 from utils import *
 
-nltk.download('stopwords')
+# nltk.download('stopwords')
 
 class FeatureExtractor(object):
     """
@@ -111,18 +111,18 @@ class PerceptronClassifier(SentimentClassifier):
 
     def __init__(self, featureExtractor: FeatureExtractor):
         self.features = None
-        self.featurizer = featureExtractor
-        self.weights = np.zeros(self.featurizer.get_indexer().__len__())
+        self.featureExtractor = featureExtractor
+        self.weights = np.zeros(self.featureExtractor.get_indexer().__len__())
 
     def predict(self, sentence: List[str]) -> int:
-        self.features = self.featurizer.extract_features(sentence)
+        self.features = self.featureExtractor.extract_features(sentence)
 
         ## compute the W
         w = sum(self.weights[index] * value for index, value in self.features.items())
 
         return 1 if w > 0 else 0
 
-    def update_weight(self, sentence: List[str], label: int, learning_rate: float = 1.0):
+    def update_weight(self, sentence: List[str], label: int, learning_rate: float = 1.15):
         ## get the pred
         pred = self.predict(sentence)
 
@@ -140,8 +140,39 @@ class LogisticRegressionClassifier(SentimentClassifier):
     modify the constructor to pass these in.
     """
 
-    def __init__(self):
-        raise Exception("Must be implemented")
+    def __init__(self, featureExtractor: FeatureExtractor):
+        self.features = None
+        self.featureExtractor = featureExtractor
+        self.weights = np.zeros(self.featureExtractor.get_indexer().__len__())
+        self.decay_rate = 0.256
+        self.initial_learning_rate = 0.985
+
+
+    def sigmoid(self, w):
+        return 1 / (1 + np.exp(-w))
+
+    def predict(self, sentence: List[str]) -> int:
+        self.features = self.featureExtractor.extract_features(sentence)
+
+        w = sum(self.weights[index] * value for index, value in self.features.items())
+
+
+        return 1 if self.sigmoid(w) > 0.5 else 0
+
+    def update_weight(self, sentence: List[str], label: int, epoch: int, learning_rate: float = 0.1):
+
+        learning_rate = self.initial_learning_rate * np.exp(-self.decay_rate * epoch)
+
+
+        pred = self.predict(sentence)
+
+        error = label - pred
+
+        for index, value in self.features.items():
+            self.weights[index] += learning_rate * error * value
+
+
+
 
 
 def train_perceptron(train_exs: List[SentimentExample], feat_extractor: FeatureExtractor) -> PerceptronClassifier:
@@ -178,7 +209,22 @@ def train_logistic_regression(train_exs: List[SentimentExample],
     :param feat_extractor: feature extractor to use
     :return: trained LogisticRegressionClassifier model
     """
-    raise Exception("Must be implemented")
+    for sentence in train_exs:
+        feat_extractor.extract_features(sentence.words, add_to_indexer=True)
+
+    model = LogisticRegressionClassifier(feat_extractor)
+
+    epochs = 45
+    for epoch in range(epochs):
+        # shuffle the data
+        random.shuffle(train_exs)
+
+        for data in train_exs:
+            sentence = data.words
+            label = data.label
+            model.update_weight(sentence, label, epoch)
+
+    return model
 
 
 def train_model(args, train_exs: List[SentimentExample], dev_exs: List[SentimentExample]) -> SentimentClassifier:
