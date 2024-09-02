@@ -1,5 +1,6 @@
 # models.py
 import random
+import string
 from collections import Counter
 
 import nltk
@@ -68,7 +69,35 @@ class BigramFeatureExtractor(FeatureExtractor):
     """
 
     def __init__(self, indexer: Indexer):
-        raise Exception("Must be implemented")
+        self.indexer = indexer
+
+    def get_indexer(self):
+        return self.indexer
+
+    def extract_features(self, sentence: List[str], add_to_indexer: bool = False) -> Counter:
+        feature_vector = Counter()
+
+        ##stopword remove and puncutation remove
+        # sentence = [word for word in sentence if word not in self.stopwords]
+        sentence = [word.translate(str.maketrans('', '', string.punctuation)) for word in sentence]
+        sentence = [word for word in sentence if word.isalnum()]
+
+
+        bigrams = [(sentence[i], sentence[i + 1]) for i in range(len(sentence) - 1)]
+
+        for bigram in bigrams:
+            bigram = (bigram[0].lower(), bigram[1].lower())
+            bigram = ' '.join(bigram)
+
+            if add_to_indexer:
+                index = self.indexer.add_and_get_index(bigram)
+            else:
+                index = self.indexer.index_of(bigram)
+                if index == -1:
+                    continue
+            feature_vector[index] += 1
+
+        return feature_vector
 
 
 class BetterFeatureExtractor(FeatureExtractor):
@@ -155,7 +184,6 @@ class LogisticRegressionClassifier(SentimentClassifier):
         self.features = self.featureExtractor.extract_features(sentence)
 
         w = sum(self.weights[index] * value for index, value in self.features.items())
-
 
         return 1 if self.sigmoid(w) > 0.5 else 0
 
