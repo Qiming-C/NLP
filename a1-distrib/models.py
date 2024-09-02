@@ -159,10 +159,9 @@ class LogisticRegressionClassifier(SentimentClassifier):
 
         return 1 if self.sigmoid(w) > 0.5 else 0
 
-    def update_weight(self, sentence: List[str], label: int, epoch: int, learning_rate: float = 0.1):
-
+    def update_weight(self, sentence: List[str], label: int, epoch: int):
+        ## exp decay learning rate
         learning_rate = self.initial_learning_rate * np.exp(-self.decay_rate * epoch)
-
 
         pred = self.predict(sentence)
 
@@ -214,7 +213,7 @@ def train_logistic_regression(train_exs: List[SentimentExample],
 
     model = LogisticRegressionClassifier(feat_extractor)
 
-    epochs = 45
+    epochs = 30
     for epoch in range(epochs):
         # shuffle the data
         random.shuffle(train_exs)
