@@ -2,12 +2,14 @@
 import random
 import string
 from collections import Counter
+from pyexpat import features
 
 import nltk
 import numpy as np
 
 from sentiment_data import *
 from utils import *
+
 
 # nltk.download('stopwords')
 
@@ -80,8 +82,6 @@ class BigramFeatureExtractor(FeatureExtractor):
         ##stopword remove and puncutation remove
         # sentence = [word for word in sentence if word not in self.stopwords]
         sentence = [word.translate(str.maketrans('', '', string.punctuation)) for word in sentence]
-        sentence = [word for word in sentence if word.isalnum()]
-
 
         bigrams = [(sentence[i], sentence[i + 1]) for i in range(len(sentence) - 1)]
 
@@ -100,13 +100,51 @@ class BigramFeatureExtractor(FeatureExtractor):
         return feature_vector
 
 
+# TF-IDF
 class BetterFeatureExtractor(FeatureExtractor):
     """
     Better feature extractor...try whatever you can think of!
     """
 
-    def __init__(self, indexer: Indexer):
-        raise Exception("Must be implemented")
+    def __init__(self, indexer: Indexer, doc_count: int, term_doc_freq: Counter):
+        self.indexer = indexer
+        self.doc_count = doc_count
+        self.term_doc_freq = term_doc_freq
+
+    def get_indexer(self):
+        return self.indexer
+
+    def compute_IDF(self, term: str):
+        return np.log(self.doc_count / (1 + self.term_doc_freq[term]))
+
+    def extract_features(self, sentence: List[str], add_to_indexer: bool = False) -> Counter:
+        feature_vector = Counter()
+        term_freq = Counter()
+
+        sentence = [word.translate(str.maketrans('', '', string.punctuation)) for word in sentence]
+
+        for word in sentence:
+            word = word.lower()
+            term_freq[word] += 1
+
+        total_terms = len(sentence)
+
+        for word, count in term_freq.items():
+            tf = count / total_terms
+            idf = self.compute_IDF(word)
+            tf_idf = tf * idf
+
+            if add_to_indexer:
+                index = self.indexer.add_and_get_index(word)
+
+            else:
+                index = self.indexer.index_of(word)
+                if index == -1:
+                    continue
+
+            feature_vector[index] = tf_idf
+
+        return feature_vector
 
 
 class SentimentClassifier(object):
@@ -176,7 +214,6 @@ class LogisticRegressionClassifier(SentimentClassifier):
         self.decay_rate = 0.256
         self.initial_learning_rate = 0.985
 
-
     def sigmoid(self, w):
         return 1 / (1 + np.exp(-w))
 
@@ -197,9 +234,6 @@ class LogisticRegressionClassifier(SentimentClassifier):
 
         for index, value in self.features.items():
             self.weights[index] += learning_rate * error * value
-
-
-
 
 
 def train_perceptron(train_exs: List[SentimentExample], feat_extractor: FeatureExtractor) -> PerceptronClassifier:
@@ -275,7 +309,8 @@ def train_model(args, train_exs: List[SentimentExample], dev_exs: List[Sentiment
         feat_extractor = BigramFeatureExtractor(Indexer())
     elif args.feats == "BETTER":
         # Add additional preprocessing code here
-        feat_extractor = BetterFeatureExtractor(Indexer())
+        doc_count, term_doc_freq = compute_document_frequencies(train_exs)
+        feat_extractor = BetterFeatureExtractor(Indexer(), doc_count, term_doc_freq)
     else:
         raise Exception("Pass in UNIGRAM, BIGRAM, or BETTER to run the appropriate system")
 
@@ -289,3 +324,17 @@ def train_model(args, train_exs: List[SentimentExample], dev_exs: List[Sentiment
     else:
         raise Exception("Pass in TRIVIAL, PERCEPTRON, or LR to run the appropriate system")
     return model
+
+
+def compute_document_frequencies(train_exs: List[SentimentExample]) -> (int, Counter):
+    term_doc_freq = Counter()
+    doc_count = len(train_exs)
+
+    for data in train_exs:
+        sentence = data.words
+        sentence = [word.lower().translate(str.maketrans('', '', string.punctuation)) for word in sentence]
+
+        for term in sentence:
+            term_doc_freq[term] += 1
+
+    return doc_count, term_doc_freq
