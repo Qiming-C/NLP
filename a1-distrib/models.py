@@ -2,9 +2,7 @@
 import random
 import string
 from collections import Counter
-from pyexpat import features
 
-import nltk
 import numpy as np
 
 from sentiment_data import *
@@ -82,6 +80,7 @@ class BigramFeatureExtractor(FeatureExtractor):
         ##stopword remove and puncutation remove
         # sentence = [word for word in sentence if word not in self.stopwords]
         sentence = [word.translate(str.maketrans('', '', string.punctuation)) for word in sentence]
+
 
         bigrams = [(sentence[i], sentence[i + 1]) for i in range(len(sentence) - 1)]
 
@@ -326,6 +325,7 @@ def train_model(args, train_exs: List[SentimentExample], dev_exs: List[Sentiment
     return model
 
 
+# compute total document count and term frequency in document
 def compute_document_frequencies(train_exs: List[SentimentExample]) -> (int, Counter):
     term_doc_freq = Counter()
     doc_count = len(train_exs)
