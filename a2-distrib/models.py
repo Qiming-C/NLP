@@ -2,10 +2,29 @@
 
 import torch
 import torch.nn as nn
+from sympy.codegen.fnodes import dimension
 from torch import optim
 import numpy as np
 import random
 from sentiment_data import *
+
+
+class DeepAveragingNetwork(nn.Module):
+    def __init__(self, word_embeddings, embedding_dim, hidden_dim, output_dim, dropout_prob=0.5):
+        super(DeepAveragingNetwork, self).__init__()
+        self.embedding = nn.Embedding.from_pretrained(word_embeddings, freeze=True)
+        self.V = nn.Linear(embedding_dim, hidden_dim)
+        self.W = nn.Linear(hidden_dim, output_dim)
+        self.g = nn.ReLU()
+        self.dropout = nn.Dropout(dropout_prob)
+
+    def forward(self, x):
+        # Step 1: Get word embeddings and average them
+        x = self.embedding(x)
+        x = torch.mean(x, dim=1)
+
+        return self.W(self.g(self.V(x)))
+
 
 
 class SentimentClassifier(object):
