@@ -10,21 +10,20 @@ from sentiment_data import *
 
 
 class DeepAveragingNetwork(nn.Module):
-    def __init__(self, word_embeddings, embedding_dim, hidden_dim, output_dim, dropout_prob=0.5):
+    def __init__(self, word_embeddings: WordEmbeddings, embedding_dim, hidden_dim, output_dim, dropout_prob=0.5):
         super(DeepAveragingNetwork, self).__init__()
-        self.embedding = nn.Embedding.from_pretrained(word_embeddings, freeze=True)
-        self.V = nn.Linear(embedding_dim, hidden_dim)
-        self.W = nn.Linear(hidden_dim, output_dim)
-        self.g = nn.ReLU()
-        self.dropout = nn.Dropout(dropout_prob)
+        self.embedding = nn.Embedding.from_pretrained(torch.from_numpy(word_embeddings))
+        self.fc1 = nn.Linear(embedding_dim, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, output_dim)
+        self.relu = nn.ReLU()
+        self.softmax = nn.LogSoftmax(dim=1)  # Using LogSoftmax for numerical stability
 
     def forward(self, x):
-        # Step 1: Get word embeddings and average them
-        x = self.embedding(x)
-        x = torch.mean(x, dim=1)
-
-        return self.W(self.g(self.V(x)))
-
+        embedded = self.embedding(x)
+        averaged = torch.mean(embedded, dim=1).float()
+        hidden = self.relu(self.fc1(averaged))
+        output = self.fc2(hidden)
+        return self.softmax(output)
 
 
 class SentimentClassifier(object):
@@ -71,12 +70,24 @@ class NeuralSentimentClassifier(SentimentClassifier):
     method and you can optionally override predict_all if you want to use batching at inference time (not necessary,
     but may make things faster!)
     """
-    def __init__(self):
-        raise NotImplementedError
+
+    def __init__(self, word_embeddings: WordEmbeddings):
+        self.word_indexer = word_embeddings.word_indexer
+        self.model = DeepAveragingNetwork(word_embeddings.vectors, word_embeddings.get_embedding_length(), 100, 2)
+        self.unk_index = self.word_indexer.index_of("UNK")
+
+    def predict(self, ex_words: List[str], has_typos: bool) -> int:
+        word_indices = [self.word_indexer.index_of(word.lower()) if self.word_indexer.index_of(
+            word.lower()) != -1 else self.unk_index for word in ex_words]
+
+        word_tensor = torch.tensor([word_indices])
+        probability = self.model.forward(word_tensor)
+        return torch.argmax(probability, dim=1).item()
 
 
 def train_deep_averaging_network(args, train_exs: List[SentimentExample], dev_exs: List[SentimentExample],
-                                 word_embeddings: WordEmbeddings, train_model_for_typo_setting: bool) -> NeuralSentimentClassifier:
+                                 word_embeddings: WordEmbeddings,
+                                 train_model_for_typo_setting: bool) -> NeuralSentimentClassifier:
     """
     :param args: Command-line args so you can access them here
     :param train_exs: training examples
@@ -87,5 +98,57 @@ def train_deep_averaging_network(args, train_exs: List[SentimentExample], dev_ex
     and return an instance of that for the typo setting if you want; you're allowed to return two different model types
     for the two settings.
     """
-    raise NotImplementedError
 
+    # Hyperparameters
+    learning_rate = 0.001
+    batch_size = 32
+    num_epochs = 10
+
+    # Initialize the model
+    classifier = NeuralSentimentClassifier(word_embeddings)
+
+    loss_function = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(classifier.model.parameters(), lr=learning_rate)
+    # trainning loop
+    # Training loop
+    for epoch in range(num_epochs):
+        classifier.model.train()
+        total_loss = 0.0
+        random.shuffle(train_exs)
+
+        # Batch the data
+        for i in range(0, len(train_exs), batch_size):
+            batch = train_exs[i:i + batch_size]
+
+            # Prepare batch data
+            word_indices = [
+                [word_embeddings.word_indexer.index_of(word.lower()) if word_embeddings.word_indexer.index_of(
+                    word.lower()) != -1 else classifier.unk_index for word in ex.words]
+                for ex in batch
+            ]
+
+            # Pad sequences to the same length
+            max_length = max(len(seq) for seq in word_indices)
+            word_indices = [seq + [0] * (max_length - len(seq)) for seq in word_indices]
+
+            word_tensor = torch.tensor(word_indices)
+            label_tensor = torch.tensor([ex.label for ex in batch], dtype=torch.long)
+
+            optimizer.zero_grad()
+
+            # Forward pass
+            probs = classifier.model.forward(word_tensor)
+
+            # Compute loss
+            loss = loss_function(probs, label_tensor)
+            total_loss += loss.item()
+
+            # Backward pass
+            loss.backward()
+            optimizer.step()
+
+        # Calculate average loss
+        avg_loss = total_loss / len(train_exs)
+        print(f'Epoch {epoch + 1}/{num_epochs}, Loss: {avg_loss:.4f}')
+
+    return classifier
