@@ -1,11 +1,13 @@
 # models.py
 
+import random
+from collections import defaultdict
+
+import nltk
 import torch
 import torch.nn as nn
-from sympy.codegen.fnodes import dimension
 from torch import optim
-import numpy as np
-import random
+
 from sentiment_data import *
 
 
@@ -16,7 +18,7 @@ class DeepAveragingNetwork(nn.Module):
         self.fc1 = nn.Linear(embedding_dim, hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, output_dim)
         self.relu = nn.ReLU()
-        self.softmax = nn.LogSoftmax(dim=1)  # Using LogSoftmax for numerical stability
+        self.softmax = nn.LogSoftmax(dim=1)
 
     def forward(self, x):
         embedded = self.embedding(x)
@@ -75,14 +77,54 @@ class NeuralSentimentClassifier(SentimentClassifier):
         self.word_indexer = word_embeddings.word_indexer
         self.model = DeepAveragingNetwork(word_embeddings.vectors, word_embeddings.get_embedding_length(), 100, 2)
         self.unk_index = self.word_indexer.index_of("UNK")
+        self.correction_cache = {}
+        self.vocab = set(self.word_indexer.objs_to_ints.keys())
+        self.vocab_by_prefix = defaultdict(list)
+        for word in self.vocab:
+            if len(word) >= 3:
+                self.vocab_by_prefix[word[:3]].append(word)
 
     def predict(self, ex_words: List[str], has_typos: bool) -> int:
+
+        if has_typos:
+            ex_words = [self.correct_spelling(word.lower()) for word in ex_words]
+
         word_indices = [self.word_indexer.index_of(word.lower()) if self.word_indexer.index_of(
             word.lower()) != -1 else self.unk_index for word in ex_words]
 
         word_tensor = torch.tensor([word_indices])
         probability = self.model.forward(word_tensor)
         return torch.argmax(probability, dim=1).item()
+
+    def correct_spelling(self, word: str) -> str:
+        if word in self.correction_cache:
+            return self.correction_cache[word]
+
+        if word in self.vocab or len(word) < 3:
+            return word
+
+        prefix = word[:3]
+        candidates = self.vocab_by_prefix[prefix]
+
+        if not candidates:
+            return word
+
+        best_word = word
+        min_distance = float('inf')
+
+        for candidate in candidates:
+
+            distance = nltk.edit_distance(word[3:], candidate[3:])
+            # update best word if distance is smaller
+            if distance < min_distance:
+                min_distance = distance
+                best_word = candidate
+                # Exit, perfect match found
+                if distance == 0:
+                    break
+
+        self.correction_cache[word] = best_word
+        return best_word
 
 
 def train_deep_averaging_network(args, train_exs: List[SentimentExample], dev_exs: List[SentimentExample],
@@ -104,13 +146,11 @@ def train_deep_averaging_network(args, train_exs: List[SentimentExample], dev_ex
     batch_size = 32
     num_epochs = 10
 
-    # Initialize the model
     classifier = NeuralSentimentClassifier(word_embeddings)
 
     loss_function = nn.CrossEntropyLoss()
     optimizer = optim.Adam(classifier.model.parameters(), lr=learning_rate)
     # trainning loop
-    # Training loop
     for epoch in range(num_epochs):
         classifier.model.train()
         total_loss = 0.0
@@ -121,19 +161,24 @@ def train_deep_averaging_network(args, train_exs: List[SentimentExample], dev_ex
             batch = train_exs[i:i + batch_size]
 
             # Prepare batch data
-            word_indices = [
-                [word_embeddings.word_indexer.index_of(word.lower()) if word_embeddings.word_indexer.index_of(
-                    word.lower()) != -1 else classifier.unk_index for word in ex.words]
-                for ex in batch
-            ]
+            word_indices = []
+            for ex in batch:
+                sentence_indices = []
+                for word in ex.words:
+                    index = word_embeddings.word_indexer.index_of(word)
+                    if index != -1:
+                        sentence_indices.append(index)
+                    else:
+                        sentence_indices.append(classifier.unk_index)
+                word_indices.append(sentence_indices)
 
             # Pad sequences to the same length
             max_length = max(len(seq) for seq in word_indices)
             word_indices = [seq + [0] * (max_length - len(seq)) for seq in word_indices]
 
             word_tensor = torch.tensor(word_indices)
-            label_tensor = torch.tensor([ex.label for ex in batch], dtype=torch.long)
-
+            labels = [ex.label for ex in batch]
+            label_tensor = torch.tensor(labels, dtype=torch.long)
             optimizer.zero_grad()
 
             # Forward pass
