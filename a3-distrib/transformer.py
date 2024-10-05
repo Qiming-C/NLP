@@ -1,13 +1,14 @@
 # transformer.py
 
-import time
+import random
+from typing import List
+
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn as nn
-import numpy as np
-import random
 from torch import optim
-import matplotlib.pyplot as plt
-from typing import List
+
 from utils import *
 
 
@@ -59,8 +60,8 @@ class Transformer(nn.Module):
             x, attention = layer(x)
             attention_maps.append(attention)
 
-        logits = self.output_layer(x)
-        log_probability = torch.log_softmax(logits, dim=1)
+        output = self.output_layer(x)
+        log_probability = torch.log_softmax(output, dim=1)
 
         return log_probability, attention_maps
 
@@ -154,30 +155,37 @@ class PositionalEncoding(nn.Module):
 
 # This is a skeleton for train_classifier: you can implement this however you want
 def train_classifier(args, train, dev):
-    raise Exception("Not fully implemented yet")
 
     # The following code DOES NOT WORK but can be a starting point for your implementation
     # Some suggested snippets to use:
-    model = Transformer(...)
+    model = Transformer(
+        vocab_size=27,  # 26 letters + space
+        num_positions=20,
+        d_model=64,
+        d_internal=32,
+        num_classes=3,
+        num_layers=2
+    )
     model.zero_grad()
     model.train()
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
+    loss_fcn = nn.NLLLoss()
 
     num_epochs = 10
-    for t in range(0, num_epochs):
-        loss_this_epoch = 0.0
-        random.seed(t)
-        # You can use batching if you'd like
+    for epoch in range(num_epochs):
+        model.train()
+        total_loss = 0.0
         ex_idxs = [i for i in range(0, len(train))]
         random.shuffle(ex_idxs)
-        loss_fcn = nn.NLLLoss()
         for ex_idx in ex_idxs:
-            loss = loss_fcn(...) # TODO: Run forward and compute loss
-            # model.zero_grad()
-            # loss.backward()
-            # optimizer.step()
-            loss_this_epoch += loss.item()
-    model.eval()
+            optimizer.zero_grad()
+            log_probs, _ = model.forward(train[ex_idx].input_tensor)
+            loss = loss_fcn(log_probs, train[ex_idx].output_tensor)
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item()
+        
+        print(f"Epoch {epoch + 1}, Loss: {total_loss / len(ex_idxs)}")
     return model
 
 
